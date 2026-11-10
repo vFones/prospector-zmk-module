@@ -38,7 +38,7 @@ struct layer_settings {
 /* ========== Default Values from Kconfig ========== */
 
 static struct brightness_settings brightness = {
-    .auto_enabled = false,
+    .auto_enabled = IS_ENABLED(CONFIG_PROSPECTOR_USE_AMBIENT_LIGHT_SENSOR),
 #ifdef CONFIG_PROSPECTOR_FIXED_BRIGHTNESS
     .manual_level = CONFIG_PROSPECTOR_FIXED_BRIGHTNESS,
 #else
