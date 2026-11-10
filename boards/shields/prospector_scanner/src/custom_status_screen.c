@@ -1595,7 +1595,7 @@ void display_update_connection(bool usb_rdy, bool ble_conn, bool ble_bond, int p
                 ble_color = "ffffff";  /* White - not bonded */
             }
             snprintf(stbuf_transport, sizeof(stbuf_transport),
-                    "#%s BLE#\n#ffffff %d#", ble_color, profile + 1);
+                    "#%s BLE#\n#ffffff %d#", ble_color, profile);
         }
         lv_label_set_text_static(transport_label, stbuf_transport);
     }
