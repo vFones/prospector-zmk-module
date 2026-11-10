@@ -74,7 +74,9 @@ static lv_timer_t *swipe_process_timer = NULL;
 
 /* Auto brightness timer - reads sensor and adjusts brightness when auto mode enabled */
 static lv_timer_t *auto_brightness_timer = NULL;
-#define AUTO_BRIGHTNESS_INTERVAL_MS 1000  /* Check sensor every 1 second */
+#define AUTO_BRIGHTNESS_INTERVAL_MS 40    /* Fade tick; the sensor is read every AB_SENSOR_TICKS ticks */
+#define AB_SENSOR_TICKS 10                /* 10 x 40ms = sensor read every 400ms */
+#define AB_HYSTERESIS 3                   /* Ignore target changes smaller than this (%) */
 static void auto_brightness_timer_cb(lv_timer_t *timer);
 static bool ds_auto_brightness_enabled = false;
 
@@ -211,7 +213,7 @@ static void set_pwm_brightness(uint8_t brightness) {
     if (ret < 0) {
         LOG_ERR("Failed to set brightness: %d", ret);
     } else {
-        LOG_INF("Backlight: user=%d%% -> PWM=%d%%", brightness, pwm_value);
+        LOG_DBG("Backlight: user=%d%% -> PWM=%d%%", brightness, pwm_value);
     }
 }
 
@@ -1587,7 +1589,7 @@ void display_update_connection(bool usb_rdy, bool ble_conn, bool ble_bond, int p
                 ble_color = "ffffff";  /* White - not bonded */
             }
             snprintf(stbuf_transport, sizeof(stbuf_transport),
-                    "#%s BLE#\n#ffffff %d#", ble_color, profile);
+                    "#%s BLE#\n#ffffff %d#", ble_color, profile + 1);
         }
         lv_label_set_text_static(transport_label, stbuf_transport);
     }
@@ -2230,28 +2232,61 @@ static void ds_custom_slider_drag_cb(lv_event_t *e) {
     }
 }
 
-/* Auto brightness timer callback - reads sensor and updates brightness */
+/* Auto brightness timer callback.
+ * Runs every AUTO_BRIGHTNESS_INTERVAL_MS: the sensor is low-pass filtered and
+ * mapped to a target (with hysteresis so sensor noise does not make the
+ * backlight hunt), then the backlight eases toward the target one small step
+ * per tick. PWM is only touched when the value actually changes. */
 static void auto_brightness_timer_cb(lv_timer_t *timer) {
-    ARG_UNUSED(timer);
+    static uint32_t filtered_x8 = 0;   /* light value, fixed point x8 */
+    static bool have_sample = false;
+    static uint8_t target = 0;
+    static uint8_t current = 0;
+    static uint8_t tick = 0;
 
     if (!ds_auto_brightness_enabled || !brightness_control_sensor_available()) {
         return;
     }
 
-    uint16_t light_val = 0;
-    int ret = brightness_control_read_sensor(&light_val);
-    if (ret != 0) {
-        LOG_DBG("Auto brightness: sensor read failed (%d)", ret);
+    /* timer == NULL: explicit kick (boot / switch turned on) -> read now */
+    if (timer == NULL || !have_sample || ++tick >= AB_SENSOR_TICKS) {
+        tick = 0;
+        uint16_t light_val = 0;
+        if (brightness_control_read_sensor(&light_val) == 0) {
+            if (!have_sample) {
+                filtered_x8 = (uint32_t)light_val * 8;
+            } else {
+                filtered_x8 = (filtered_x8 * 3 + (uint32_t)light_val * 8) / 4;
+            }
+            uint8_t t = brightness_control_map_light_to_brightness(filtered_x8 / 8);
+            int diff = (int)t - (int)target;
+            if (!have_sample || diff >= AB_HYSTERESIS || diff <= -AB_HYSTERESIS ||
+                (t != target && (t <= CONFIG_PROSPECTOR_ALS_MIN_BRIGHTNESS ||
+                                 t >= CONFIG_PROSPECTOR_ALS_MAX_BRIGHTNESS))) {
+                target = t;
+                LOG_DBG("Auto brightness: light=%u -> target=%u%%", light_val, target);
+            }
+            if (!have_sample) {
+                have_sample = true;
+                current = target;
+                set_pwm_brightness(current);
+                return;
+            }
+        }
+    }
+
+    if (!have_sample || current == target) {
         return;
     }
 
-    /* Map light value to brightness percentage */
-    uint8_t target_brightness = brightness_control_map_light_to_brightness(light_val);
-
-    /* Apply brightness (PWM) */
-    set_pwm_brightness(target_brightness);
-
-    LOG_DBG("Auto brightness: light=%u -> brightness=%u%%", light_val, target_brightness);
+    /* Ease toward target: bigger steps when far, 1% steps when close */
+    int diff = (int)target - (int)current;
+    int step = diff / 8;
+    if (step == 0) {
+        step = (diff > 0) ? 1 : -1;
+    }
+    current = (uint8_t)((int)current + step);
+    set_pwm_brightness(current);
 }
 
 /* Auto brightness switch handler */
