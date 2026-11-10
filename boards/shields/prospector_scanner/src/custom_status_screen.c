@@ -77,6 +77,12 @@ static lv_timer_t *auto_brightness_timer = NULL;
 #define AUTO_BRIGHTNESS_INTERVAL_MS 40    /* Fade tick; the sensor is read every AB_SENSOR_TICKS ticks */
 #define AB_SENSOR_TICKS 10                /* 10 x 40ms = sensor read every 400ms */
 #define AB_HYSTERESIS 3                   /* Ignore target changes smaller than this (%) */
+#ifndef CONFIG_PROSPECTOR_ALS_MIN_BRIGHTNESS
+#define CONFIG_PROSPECTOR_ALS_MIN_BRIGHTNESS 5
+#endif
+#ifndef CONFIG_PROSPECTOR_ALS_MAX_BRIGHTNESS
+#define CONFIG_PROSPECTOR_ALS_MAX_BRIGHTNESS 100
+#endif
 static void auto_brightness_timer_cb(lv_timer_t *timer);
 static bool ds_auto_brightness_enabled = false;
 
